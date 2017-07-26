@@ -22,7 +22,7 @@ object JSLike {
 }
 
 /** A convenient wrapper around JS trees */
-final class JS private(tree: Tree) extends JSLike(tree) {
+final class JS private (tree: Tree) extends JSLike(tree) {
   import JS.position
   def dot(ident: String): JS = JS(DotSelect(tree, Ident(ident)))
   def bracket(ident: String): JS = JS(BracketSelect(tree, StringLiteral(ident)))
@@ -45,7 +45,11 @@ object JS {
 
   /** Object literal */
   def obj(fields: (String, JSLike)*): JS =
-    JS(ObjectConstr(fields.map { case (ident, value) => (StringLiteral(ident), value.tree) }.to[List]))
+    JS(
+      ObjectConstr(
+        fields
+          .map { case (ident, value) => (StringLiteral(ident), value.tree) }
+          .to[List]))
 
   /** Object literal */
   def objStr(fields: Seq[(String, String)]): JS =
@@ -54,11 +58,18 @@ object JS {
   /** String literal */
   def str(value: String): JS = JS(StringLiteral(value))
 
+  /** Numeric literal */
+  def int(value: Int): JS = JS(IntLiteral(value))
+
   /** Variable reference */
   def ref(ident: String): JS =
     JS(varRef(ident))
 
   private def varRef(ident: String): VarRef = VarRef(Ident(ident))
+
+  /** Variable definition */
+  def `var`(ident: String, rhs: Option[JSLike] = None): JS =
+    JS(VarDef(Ident(ident), rhs.map(_.tree)))
 
   def regex(value: String): JS =
     JS(New(varRef("RegExp"), List(StringLiteral(value))))
@@ -69,7 +80,9 @@ object JS {
   /** Anonymous function definition */
   def fun(body: JS => JSLike): JS = {
     val param = freshIdentifier()
-    JS(Function(List(ParamDef(Ident(param), rest = false)), Return(body(ref(param)).tree)))
+    JS(
+      Function(List(ParamDef(Ident(param), rest = false)),
+               Return(body(ref(param)).tree)))
   }
 
   /** Name binding */
@@ -91,7 +104,8 @@ object JS {
     )
   }
 
-  def `new`(ctor: JS, args: JSLike*): JS = JS(New(ctor.tree, args.map(_.tree).to[List]))
+  def `new`(ctor: JS, args: JSLike*): JS =
+    JS(New(ctor.tree, args.map(_.tree).to[List]))
 
   private val identifierSeq = new AtomicInteger(0)
   private def freshIdentifier(): String =
@@ -99,7 +113,7 @@ object JS {
 
 }
 
-final class JSON private(tree: Tree) extends JSLike(tree)
+final class JSON private (tree: Tree) extends JSLike(tree)
 
 object JSON {
 
@@ -115,7 +129,11 @@ object JSON {
 
   /** Object literal */
   def obj(fields: (String, JSON)*): JSON =
-    JSON(ObjectConstr(fields.map { case (ident, value) => (StringLiteral(ident), value.tree) }.to[List]))
+    JSON(
+      ObjectConstr(
+        fields
+          .map { case (ident, value) => (StringLiteral(ident), value.tree) }
+          .to[List]))
 
   /** Object literal */
   def objStr(fields: Seq[(String, String)]): JSON =
