@@ -2,6 +2,7 @@ package scalajsbundler
 
 import sbt._
 
+import scalajsbundler.ReloadWorkflow.modulePrefix
 import scalajsbundler.util.{Commands, JS}
 
 object Webpack {
@@ -42,14 +43,17 @@ object Webpack {
   ): File = {
     // Create scalajs.webpack.config.js
     val webpackConfigFile = targetDir / "scalajs.webpack.config.js" // TODO discriminate filename according to sjs stage
+    val libName = "__scalajsbundler_deps__"
     val webpackConfigContent =
+      JS.block(JS.`var`("webpack", Some(JS.ref("require").apply(JS.str("webpack")))),
       JS.ref("module").dot("exports").assign(JS.obj(Seq(
         "entry" -> JS.obj(webpackEntries.map { case (key, file) =>
           key -> JS.arr(JS.str(file.absolutePath)) }: _*
         ),
         "output" -> JS.obj(
           "path" -> JS.str(targetDir.absolutePath),
-          "filename" -> JS.str(bundleName("[name]"))
+          "filename" -> JS.str(bundleName("[name]")),
+          "library" -> JS.str(libName)
         )
       ) ++ (
         if (emitSourceMaps) {
@@ -83,7 +87,7 @@ object Webpack {
             case _ => sys.error("Unsupported webpack version")
           }
         } else Nil
-        ): _*))
+        ): _*)))
     log.debug("Writing 'scalajs.webpack.config.js'")
     IO.write(webpackConfigFile, webpackConfigContent.show)
 
@@ -106,6 +110,7 @@ object Webpack {
     webpackResources: Seq[File],
     entries: Seq[(String, File)],
     targetDir: File,
+    scalajsOutputFile: File,
     log: Logger
   ): Seq[File] = {
 
@@ -119,7 +124,25 @@ object Webpack {
     val bundles =
       entries.map { case (key, _) =>
         // TODO Support custom webpack config file (the output may be overridden by users)
-        targetDir / Webpack.bundleName(key)
+        val outputFile = targetDir / Webpack.bundleName(key)
+
+        IO.withTemporaryFile("scalajs-bundler", key) { tmpFile =>
+          IO.copyFile(outputFile, tmpFile)
+          IO.append(tmpFile, "\n")
+          IO.append(tmpFile,
+            """(function() {
+              |  var exports = {};
+              |  var require = __scalajsbundler_deps__.require;
+            """.stripMargin)
+          IO.append(tmpFile, IO.readBytes(scalajsOutputFile))
+          IO.append(tmpFile,
+            """
+              |})();
+            """.stripMargin)
+          IO.move(tmpFile, outputFile)
+        }
+          
+        outputFile
       }
     bundles
   }

@@ -7,14 +7,21 @@ import org.scalajs.jsenv.ComJSEnv
 import org.scalajs.jsenv.nodejs.NodeJSEnv
 import org.scalajs.sbtplugin.Loggers.sbtLogger2ToolsLogger
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport._
-import org.scalajs.sbtplugin.ScalaJSPluginInternal.{scalaJSEnsureUnforked, scalaJSModuleIdentifier, scalaJSRequestsDOM}
-import org.scalajs.sbtplugin.{FrameworkDetectorWrapper, ScalaJSPlugin, ScalaJSPluginInternal, Stage}
+import org.scalajs.sbtplugin.ScalaJSPluginInternal._
+import org.scalajs.sbtplugin.{
+  FrameworkDetectorWrapper,
+  ScalaJSPlugin,
+  ScalaJSPluginInternal,
+  Stage
+}
 import org.scalajs.testadapter.ScalaJSFramework
 import sbt.Keys._
 import sbt._
 
 import scalajsbundler.ExternalCommand.install
 import scalajsbundler._
+import scalajsbundler.util.Caching.cached
+import scalajsbundler.util.ScalaJSOutputAnalyzer
 
 /**
   * This plugin enables `ScalaJSPlugin` and sets the `scalaJSModuleKind` to `CommonJSModule`. It also makes it
@@ -697,8 +704,9 @@ object ScalaJSBundlerPlugin extends AutoPlugin {
 
       webpackEntries in stageTask := {
         val stageFile = stageTask.value.data
+        val entryPointFile = entryPointTask(stageTask).value
         val name = stageFile.name.stripSuffix(".js")
-        Seq(name -> stageFile)
+        Seq(name -> entryPointFile)
       },
 
       scalaJSBundlerWebpackConfig in stageTask :=
@@ -801,11 +809,50 @@ object ScalaJSBundlerPlugin extends AutoPlugin {
             webpackResourceFiles,
             entries,
             targetDir,
+            stage.value.data,
             log
           ).to[Set]
         }
 
       cachedActionFunction(monitoredFiles.to[Set]).to[Seq]
+    }
+
+  def entryPointTask(
+      stage: TaskKey[Attributed[File]]): Def.Initialize[Task[File]] =
+    Def.taskDyn {
+      val linkerConfig = (scalaJSLinkerConfig in stage).value
+      val linker = (scalaJSLinker in stage).value
+      val linkerTag = (usesScalaJSLinkerTag in stage).value
+      Def
+        .task {
+          val targetDir = (crossTarget in stage).value
+          val logger = streams.value.log
+
+          val entryPointFile = targetDir / "scalajsbundler-entry-point.js"
+
+          val importedModules =
+            ScalaJSOutputAnalyzer.findImportedModules(
+              linkerConfig,
+              linker,
+              scalaJSIR.value.data,
+              scalaJSModuleInitializers.value,
+              logger
+            )
+          cached(
+            entryPointFile,
+            importedModules.##.toString,
+            streams.value.cacheDirectory / "scalajsbundler-bundle"
+          ) { () =>
+            WebpackEntryPoint.writeEntryPoint(
+              importedModules,
+              entryPointFile,
+              streams.value.log
+            )
+          }
+          entryPointFile
+        }
+        .tag(linkerTag)
+        .dependsOn(npmUpdate in stage)
     }
 
   /**
