@@ -10,6 +10,7 @@ import scalajsbundler.ReloadWorkflow
 import scalajsbundler.sbtplugin.ScalaJSBundlerPlugin.autoImport._
 import scalajsbundler.sbtplugin.ScalaJSBundlerPlugin.ensureModuleKindIsCommonJSModule
 import scalajsbundler.util.Caching.cached
+import scalajsbundler.util.ScalaJSOutputAnalyzer
 
 /** Sbt tasks related to the reload workflow */
 object ReloadWorkflowTasks {
@@ -46,7 +47,7 @@ object ReloadWorkflowTasks {
         val webpackResourcesFiles = webpackResources.value.get
 
         val importedModules =
-          ReloadWorkflow.findImportedModules(
+          ScalaJSOutputAnalyzer.findImportedModules(
             linkerConfig,
             linker,
             scalaJSIR.value.data,
