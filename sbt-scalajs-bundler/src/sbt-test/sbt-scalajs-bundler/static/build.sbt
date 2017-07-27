@@ -20,8 +20,6 @@ libraryDependencies += "org.scalatest" %%% "scalatest" % "3.0.0" % Test
 // Execute the tests in browser-like environment
 requiresDOM in Test := true
 
-enableReloadWorkflow := true
-
 useYarn := true
 
 // Check that a HTML can be loaded (and that its JavaScript can be executed) without errors
@@ -39,6 +37,6 @@ InputKey[Unit]("html") := {
 
 TaskKey[Unit]("checkSize") := {
   val artifactSize = IO.readBytes((webpack in (Compile, fullOptJS)).value.head).length
-  val expected = 19790
+  val expected = 20781
   assert(artifactSize == expected, s"expected: $expected, got: $artifactSize")
 }
