@@ -838,17 +838,20 @@ object ScalaJSBundlerPlugin extends AutoPlugin {
               scalaJSModuleInitializers.value,
               logger
             )
-          cached(
-            entryPointFile,
-            importedModules.##.toString,
-            streams.value.cacheDirectory / "scalajsbundler-bundle"
-          ) { () =>
-            WebpackEntryPoint.writeEntryPoint(
+          val exports =
+            ScalaJSOutputAnalyzer.findTopLevelExports(
+              linkerConfig,
+              linker,
+              scalaJSIR.value.data,
+              scalaJSModuleInitializers.value,
+              logger
+            )
+          WebpackEntryPoint.writeEntryPoint(
               importedModules,
+              exports,
               entryPointFile,
               streams.value.log
             )
-          }
           entryPointFile
         }
         .tag(linkerTag)

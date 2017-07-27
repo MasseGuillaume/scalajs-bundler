@@ -13,6 +13,7 @@ object WebpackEntryPoint {
     */
   def writeEntryPoint(
       imports: Seq[String],
+      exports: Seq[String],
       entryPoint: File,
       logger: Logger
   ) = {
@@ -22,11 +23,12 @@ object WebpackEntryPoint {
         .dot("exports")
         .assign(
           JS.obj(
-            "require" -> JS.fun(name => 
-              JS.obj(imports.map { moduleName =>
-                moduleName -> JS.ref("require").apply(JS.str(moduleName))
-              }: _*).bracket(name))
-          )
+            Seq(
+              "require" -> JS.fun(name =>
+                JS.obj(imports.map { moduleName =>
+                    moduleName -> JS.ref("require").apply(JS.str(moduleName))
+                  }: _*)
+                  .bracket(name))) ++ exports.map(_ -> null): _*)
         )
     IO.write(entryPoint, depsFileContent.show)
     ()
