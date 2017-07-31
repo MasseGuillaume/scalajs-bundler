@@ -2,7 +2,6 @@ package scalajsbundler
 
 import sbt._
 
-import scalajsbundler.ReloadWorkflow.modulePrefix
 import scalajsbundler.util.{Commands, JS}
 
 object Webpack {
@@ -30,14 +29,14 @@ object Webpack {
     * Writes the webpack configuration file
     *
     * @param emitSourceMaps Whether source maps is enabled at all
-    * @param webpackEntries Module entries (name, file.js)
+    * @param webpackEntryPoints Module entry points (name, file.js)
     * @param targetDir Directory to write the file into
     * @param log Logger
     * @return The written file
     */
   def writeConfigFile(
     emitSourceMaps: Boolean,
-    webpackEntries: Seq[(String, File)],
+    webpackEntryPoints: Seq[(String, File)],
     targetDir: File,
     log: Logger
   ): File = {
@@ -47,12 +46,12 @@ object Webpack {
     val webpackConfigContent =
       JS.block(JS.`var`("webpack", Some(JS.ref("require").apply(JS.str("webpack")))),
       JS.ref("module").dot("exports").assign(JS.obj(Seq(
-        "entry" -> JS.obj(webpackEntries.map { case (key, file) =>
+        "entry" -> JS.obj(webpackEntryPoints.map { case (key, file) =>
           key -> JS.arr(JS.str(file.absolutePath)) }: _*
         ),
         "output" -> JS.obj(
           "path" -> JS.str(targetDir.absolutePath),
-          "filename" -> JS.str(bundleName("[name]")),
+          "filename" -> JS.str(libraryFileName("[name]")),
           "library" -> JS.str(libName)
         )
       ) ++ (
@@ -71,7 +70,7 @@ object Webpack {
                   )
                 )
               )
-            case Some(2) =>
+            case Some(2) | Some(3) =>
               Seq(
                 "devtool" -> JS.str("source-map"),
                 "module" -> JS.obj(
@@ -104,51 +103,112 @@ object Webpack {
     * @param log Logger
     * @return The generated bundles
     */
-  def bundle(
-    generatedWebpackConfigFile: File,
-    customWebpackConfigFile: Option[File],
-    webpackResources: Seq[File],
-    entries: Seq[(String, File)],
-    targetDir: File,
-    scalajsOutputFile: File,
-    log: Logger
-  ): Seq[File] = {
+  def libraries(
+              generatedWebpackConfigFile: File,
+              customWebpackConfigFile: Option[File],
+              webpackResources: Seq[File],
+              entryPointFiles: Seq[(String, File)],
+              entries: Seq[(String, File)],
+              targetDir: File,
+              log: Logger
+            ): Seq[File] = {
 
     val configFile = customWebpackConfigFile
       .map(Webpack.copyCustomWebpackConfigFiles(targetDir, webpackResources))
       .getOrElse(generatedWebpackConfigFile)
 
-    log.info("Bundling the application with its NPM dependencies")
+    log.info("Bundling the applications NPM dependencies")
     Webpack.run("--config", configFile.absolutePath)(targetDir, log)
 
-    val bundles =
-      entries.map { case (key, _) =>
-        // TODO Support custom webpack config file (the output may be overridden by users)
-        val outputFile = targetDir / Webpack.bundleName(key)
-
-        IO.withTemporaryFile("scalajs-bundler", key) { tmpFile =>
-          IO.copyFile(outputFile, tmpFile)
-          IO.append(tmpFile, "\n")
-          IO.append(tmpFile,
-            """(function() {
-              |  var exports = {};
-              |  var require = __scalajsbundler_deps__.require;
-            """.stripMargin)
-          IO.append(tmpFile, IO.readBytes(scalajsOutputFile))
-          IO.append(tmpFile,
-            """
-              |})();
-            """.stripMargin)
-          IO.move(tmpFile, outputFile)
-        }
-          
-        outputFile
-      }
-    bundles
+    entries.map { case (k, v) =>  
+      targetDir / Webpack.libraryFileName(k)
+    }
   }
+  
+  val loader: String =
+    """
+      |var exports = {};
+      |var require = __scalajsbundler_deps__.require;
+    """.stripMargin
+
+  /**
+    * Run webpack to bundle the application.
+    *
+    * @param targetDir Target directory (and working directory for Nodejs)
+    * @param logger Logger
+    * @return The generated bundles
+    */
+  def bundle(
+    targetDir: File,
+    scalaJsOutputFiles: Seq[(String, File)],
+    webpackLibraryFiles: Seq[(String, File)],
+    emitSourceMaps: Boolean = false,
+    logger: Logger
+  ): Seq[(String, File)] = 
+    webpackLibraryFiles.flatMap { case (key, libraryFile) =>
+      scalaJsOutputFiles.find(_._1 == key).map { scalaJsOutputFile =>
+        (key, scalaJsOutputFile._2, libraryFile)
+      }
+    }.map { case (key, scalaJsOutputFile, libraryFile) =>
+      val bundleFile = targetDir / Webpack.bundleFileName(key)
+      val loaderFile = targetDir / Webpack.loaderFileName(key)
+
+      if (emitSourceMaps) {
+        logger.info("Bundling dependencies with source maps")
+        IO.write(loaderFile, loader)
+        val concatContent =
+          JS.let(
+            JS.ref("require")(JS.str("concat-with-sourcemaps")),
+            JS.ref("require")(JS.str("fs"))
+          ) { (Concat, fs) =>
+            JS.let(JS.`new`(Concat, JS.bool(true), JS.str(bundleFile.name), JS.str(";\n"))) { concat =>
+              JS.block(
+                concat.dot("add").apply(JS.str(libraryFile.absolutePath), 
+                  fs.dot("readFileSync").apply(JS.str(libraryFile.absolutePath))),
+                concat.dot("add").apply(JS.str(loaderFile.absolutePath), 
+                  fs.dot("readFileSync").apply(JS.str(loaderFile.absolutePath))),
+                concat.dot("add").apply(JS.str(scalaJsOutputFile.absolutePath), 
+                  fs.dot("readFileSync").apply(JS.str(scalaJsOutputFile.absolutePath)), 
+                  fs.dot("readFileSync").apply(JS.str(scalaJsOutputFile.absolutePath ++ ".map"), JS.str("utf-8"))),
+                JS.let(JS.`new`(JS.ref("Buffer"), JS.str(s"\n//# sourceMappingURL=${bundleFile.name ++ ".map"}\n"))) { endBuffer =>
+                  JS.let(JS.ref("Buffer").dot("concat").apply(JS.arr(concat.dot("content"), endBuffer))) { result =>
+                    fs.dot("writeFileSync").apply(JS.str(bundleFile.absolutePath), result)
+                  }
+                },
+                fs.dot("writeFileSync").apply(JS.str(bundleFile.absolutePath ++ ".map"), concat.dot("sourceMap"))
+              )
+            }
+          }
+        val concatFile = targetDir / "scalajsbundler-concat.js"
+        IO.write(concatFile, concatContent.show)
+        Commands.run(Seq("node", concatFile.absolutePath), targetDir, logger)
+      } else {
+        logger.info("Bundling dependencies without source maps")
+        IO.withTemporaryFile("scalajs-bundler", key) { tmpFile =>
+          IO.copyFile(libraryFile, tmpFile)
+          IO.append(tmpFile, "\n")
+          IO.append(tmpFile, "(function() {\n".stripMargin)
+          IO.append(tmpFile, IO.readBytes(loaderFile))
+          IO.append(tmpFile, "\n")
+          IO.append(tmpFile, IO.readBytes(scalaJsOutputFile))
+          IO.append(tmpFile, "})();")
+          IO.move(tmpFile, bundleFile)
+        }
+      }
+      key -> bundleFile
+    }
 
   /** Filename of the generated bundle, given its module entry name */
-  def bundleName(entry: String): String = s"$entry-bundle.js"
+  def entryPointFileName(entry: String): String = s"$entry-entrypoint.js"
+  
+  /** Filename of the generated libraries bundle, given its module entry name */
+  def libraryFileName(entry: String): String = s"$entry-libraries.js"
+  
+  /** Filename of the generated bundle, given its module entry name */
+  def loaderFileName(entry: String): String = s"$entry-loader.js"
+  
+  /** Filename of the generated bundle, given its module entry name */
+  def bundleFileName(entry: String): String = s"$entry-bundle.js"
 
   /**
     * Runs the webpack command.

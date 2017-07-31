@@ -86,6 +86,7 @@ object ScalaJSOutputAnalyzer {
         Loggers.sbtLogger2ToolsLogger(logger))
     linkingUnit.classDefs
       .flatMap(_.topLevelExportNames)
+      .filter(_ == null)
       .distinct
   }
 
