@@ -789,7 +789,7 @@ object ScalaJSBundlerPlugin extends AutoPlugin {
           cached(
             entryPointFile,
             (exports ++ importedModules).##.toString,
-            streams.value.cacheDirectory / "scalajsbundler-bundle"
+            streams.value.cacheDirectory / "webpack-entrypoint"
           ) { () =>
             logger.info(s"Writing module entry point for $entry")
             WebpackEntryPoint.writeEntryPoint(
@@ -821,7 +821,7 @@ object ScalaJSBundlerPlugin extends AutoPlugin {
 
       val cachedActionFunction =
         FileFunction.cached(
-          streams.value.cacheDirectory / s"${stage.key.label}-webpack",
+          streams.value.cacheDirectory / s"${stage.key.label}-webpack-libraries",
           inStyle = FilesInfo.hash
         ) { _ =>
           logger.info(s"Building webpack library bundles for ${entries.map(_._1)}")
@@ -844,12 +844,25 @@ object ScalaJSBundlerPlugin extends AutoPlugin {
   def webpackBundleTask(stage: TaskKey[Attributed[File]]): Def.Initialize[Task[Seq[(String, File)]]] =
     Def.task {
       assert(ensureModuleKindIsCommonJSModule.value)
-      Webpack.bundle(
-        targetDir = npmUpdate.value,
-        (webpackEntries in stage).value,
-        (webpackLibraries in stage).value,
-        (emitSourceMaps in stage).value,
-        streams.value.log
+      val libraries = (webpackLibraries in stage).value
+      val entries =  (webpackEntries in stage).value
+
+      val cachedActionFunction =
+        FileFunction.cached(
+          streams.value.cacheDirectory / s"${stage.key.label}-webpack-bundle",
+          inStyle = FilesInfo.hash
+        ) { _ =>
+          Webpack.bundle(
+            targetDir = npmUpdate.value,
+            entries,
+            libraries,
+            (emitSourceMaps in stage).value,
+            streams.value.log
+          ).toSet
+        }
+      val filesToMonitor = entries.map(_._2) ++ libraries.map(_._2)
+      cachedActionFunction(filesToMonitor.toSet).to[Seq].map(file =>
+        file.name.stripSuffix("-libraries.js") -> file
       )
     }
 

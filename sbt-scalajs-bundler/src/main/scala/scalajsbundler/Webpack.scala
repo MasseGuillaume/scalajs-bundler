@@ -125,7 +125,7 @@ object Webpack {
     }
   }
   
-  val loader: String =
+  val loaderScript: String =
     """
       |var exports = {};
       |var require = __scalajsbundler_deps__.require;
@@ -144,7 +144,7 @@ object Webpack {
     webpackLibraryFiles: Seq[(String, File)],
     emitSourceMaps: Boolean = false,
     logger: Logger
-  ): Seq[(String, File)] = 
+  ): Seq[File] = 
     webpackLibraryFiles.flatMap { case (key, libraryFile) =>
       scalaJsOutputFiles.find(_._1 == key).map { scalaJsOutputFile =>
         (key, scalaJsOutputFile._2, libraryFile)
@@ -155,7 +155,7 @@ object Webpack {
 
       if (emitSourceMaps) {
         logger.info("Bundling dependencies with source maps")
-        IO.write(loaderFile, loader)
+        IO.write(loaderFile, loaderScript)
         val concatContent =
           JS.let(
             JS.ref("require")(JS.str("concat-with-sourcemaps")),
@@ -188,14 +188,14 @@ object Webpack {
           IO.copyFile(libraryFile, tmpFile)
           IO.append(tmpFile, "\n")
           IO.append(tmpFile, "(function() {\n".stripMargin)
-          IO.append(tmpFile, IO.readBytes(loaderFile))
+          IO.append(tmpFile, loaderScript)
           IO.append(tmpFile, "\n")
           IO.append(tmpFile, IO.readBytes(scalaJsOutputFile))
           IO.append(tmpFile, "})();")
           IO.move(tmpFile, bundleFile)
         }
       }
-      key -> bundleFile
+      bundleFile
     }
 
   /** Filename of the generated bundle, given its module entry name */
